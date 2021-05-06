@@ -9,6 +9,7 @@ using System.Linq;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Http;
 using SimpleBloggingPlatform.Utils;
+using SimpleBloggingPlatform.Services;
 
 namespace SimpleBloggingPlatform.Controllers
 {
@@ -16,114 +17,87 @@ namespace SimpleBloggingPlatform.Controllers
     {
         private readonly ApplicationDbContext context;
         private readonly ILogger<PostsController> logger;
-        public PostsController(ApplicationDbContext context, ILogger<PostsController> logger)
+        private readonly IPostService postService;
+        private readonly ITagService tagService;
+
+        public PostsController(ApplicationDbContext context, ILogger<PostsController> logger, IPostService postService, ITagService tagService)
         {
             this.context = context;
             this.logger = logger;
-        }
-
-        //DELETE:
-        [HttpDelete("{slug}")]
-        public async Task<IActionResult> DeletePostAsync(string slug)
-        {
-            try
-            {
-                var post = GetPostBySlugAsync(slug); // await context.Posts.FindAsync();  //GetPostBySlugAsync(slug);
-                if (post == null)
-                {
-                    return NotFound();
-                }
-                context.Posts.Remove(post.Result);
-                await context.SaveChangesAsync();
-            }
-            catch (Exception)
-            {
-                return StatusCode(StatusCodes.Status500InternalServerError, "Error retrieving data from the database");
-            }
-            return NoContent();
+            this.postService = postService;
+            this.tagService = tagService;
         }
 
         //GET: api/posts
         [HttpGet]
         public ActionResult<PostsRequestData> GetAlll()
         {
-            var posts = GetPostsAsync();
-               //Will return multiple blog posts, ordered by most recent first.
-            var postsRequest = new PostsRequestData(posts.Result.OrderByDescending(post => 
-            { if (post.UpdatedAt != null) return post.UpdatedAt;
-                else return post.CreatedAt; 
-            } ));
-            return Ok(postsRequest);
-        }
-
-        private async Task<IEnumerable<Post>> GetPostsAsync()
-        {
-            var posts = await context.Posts.Include(p => p.Tags).ToListAsync();
-            foreach(Post post in posts)
+            try
             {
-                post.TagList = new List<string>();
-               foreach(Tag tag in post.Tags)
-                {
-                    post.TagList.Add(tag.Name);
-                }
+                var posts = postService.GetPostsAsync();
+                var postsRequest = new PostsRequestData(posts.Result.OrderByDescending(post => {
+                    if (post.UpdatedAt != null)
+                    {
+                        return post.UpdatedAt;
+                    }
+                    else 
+                        return post.CreatedAt; 
+                    } ));
+            
+                return Ok(postsRequest);
             }
-            return posts;
+            catch (Exception)
+            {
+                return StatusCode(StatusCodes.Status500InternalServerError, "Error retrieving data from the database");
+            }
         }
 
         //GET: api/posts/:slug
         [HttpGet("{slug}")]
         public ActionResult<PostRequestData> GetPostBySlug(string slug)
         {
-            try 
-            { 
-                var post = GetPostBySlugAsync(slug);
+            try
+            {
+                var post = postService.GetPostBySlugAsync(slug).Result;
                 if (post == null)
                 {
                     logger.LogWarning("GET blog post with slug ({slug}) NOT FOUND", slug);
-                    return NotFound();
+                    return NotFound("Tag with slug {slug} does not exists.");
                 }
-                var postRequestData = new PostRequestData { BlogPost = post.Result };
-                return Ok(postRequestData);
+                var postRequestData = new PostRequestData { BlogPost = post };
+                return Ok(postRequestData);  
             }
             catch (Exception)
             {
                 return StatusCode(StatusCodes.Status500InternalServerError, "Error retrieving data from the database");
-            }
-        }
-        private async Task<Post> GetPostBySlugAsync(string slug)
-        {
-                return await context.Posts.FindAsync(slug);
+             }
+    
         }
 
         [HttpPost]
-        public IActionResult PostBlogPost(PostRequestData post)
+        public IActionResult CreatePost(PostRequestData post)
         {
-            if (post == null) //ima li ovo smisla jer nema ?,ne moze biti null ...
+            if (post == null)
             {
                 logger.LogWarning("POST blog posts BAD REQUEST");
                 return BadRequest();
             }
-            //Requirement of fields is obtained by [Requiered] Anotation
-            if (post.BlogPost.Title == null || post.BlogPost.Title.Length == 0) //treba li ovo kad radi na nivou anotacije?
-            {
-                logger.LogWarning("POST blog posts with empty title ({post.title}) BAD REQUEST", post);
-                // return StatusCode(500);
-                return BadRequest();
-            }
-
+            //Requirement of props Title, Description and Body  is obtained by [Requiered] Anotation
             if (context.Posts == null)
             {
                 return StatusCode(StatusCodes.Status500InternalServerError, "Error retrieving data from the database");
             }
             try
             {
-                if (context.Posts.FirstOrDefault(p => p.Title.Equals(post.BlogPost.Title)) != null) { 
-                    logger.LogWarning("POST blog posts with  title ({tagTitle}) BAD REQUEST", post);
-                    return BadRequest("The title field is taken.");
-                    // return BadRequest("The title field is taken.");  // trebam li reci u poruci da je zauzet title?
+                var newSlug = Utilities.Slugify(post.BlogPost.Title);
+                if (context.Posts.FirstOrDefault(p => p.Title.Equals(post.BlogPost.Title) || p.Slug.Equals(newSlug)) != null)
+                {
+                    logger.LogWarning("POST blog posts with slug ({newSlug}) BAD REQUEST", post);
+                    return BadRequest("The Slug field is taken.");
                 }
-                var newPost = CreateNewPostAsync(post.BlogPost).Result;
-                return CreatedAtAction(nameof(GetPostBySlug), new { slug = newPost.Slug }, newPost); /// ovo ispod nije okej, jer traze da im vratim ovaj novi, dodani objekat: return Ok(post); return StatusCode(201);
+                var isPost = true;
+                var newPost = postService.CreatePostAsync(post.BlogPost, isPost).Result;
+                return CreatedAtAction(nameof(GetPostBySlug), new { slug = newPost.Slug }, newPost); 
             }
             catch (Exception)
             {
@@ -131,56 +105,91 @@ namespace SimpleBloggingPlatform.Controllers
             }
         }
 
-
-        private async Task<Post> CreateNewPostAsync(Post post)
-        {
-            
-            var newSlug = Utilities.Slugify(post.Title);
-            if (post.TagList != null)
-            {
-                SaveTagsOfPost(post);
-            }
-            var createdAt = Utilities.GetZuluOfNow();
-            var newPost = new Post { Slug = newSlug, Title = post.Title, Body = post.Body, 
-                Description = post.Description, CreatedAt = createdAt };
-            context.Posts.Add(newPost);
-            await context.SaveChangesAsync();
-            return newPost;
-        }
-
-        //TODO
-        private void SaveTagsOfPost(Post blogPost)
-        {
-            //provjeriti da li ima tih tagova u bazi, pa ako nema kreirati nove entry-je u bazi u obje tabele.
-
-            //Ako ima, dodati u samo post-Tag 
-
-        }
-
-        //TODO
         // GET: api/posts/filter?tag=smt
         [HttpGet("Filter")]
-        public async Task<ActionResult> Filter(string tag)
+        public async Task<ActionResult<IEnumerable<Post>>> Filter(string tag)
         {
-            var foundTag = context.Tags.Where(t => t.Name.Equals(tag)).Select(t => new Tag { Id = t.Id, Name = t.Name }).FirstOrDefault(); //tag name je unique
-            if(foundTag == null)
+            try
             {
-                logger.LogWarning("GET blog posts with tag name ({tag}) NOT FOUND", tag);
-                return NotFound("Tag with name {tag} does not exists.");
+                var foundTag = tagService.FindByName(tag);
+                if (foundTag == null)
+                {
+                    logger.LogWarning("GET blog posts with tag name ({tag}) NOT FOUND", foundTag);
+                    return NotFound("Tag with name {tag} does not exists.");
+                }
+                var postTags = await context.PostTags.Where(pt => pt.TagId == foundTag.Id).
+                    Select(pt => new PostTag { TagId = pt.TagId, Tag = foundTag, PostSlug = pt.PostSlug}).ToListAsync();
+                
+                var result = postTags.Select(pt => pt.Post = postService.GetPostBySlugAsync(pt.PostSlug).Result ).ToList();
+                return result;
             }
-            var postTags = await context.PostTags.Where(pt => pt.TagId == foundTag.Id).
-                Select(pt => new PostTag { TagId = pt.TagId, PostSlug = pt.PostSlug }).ToListAsync();
-
-            //...
-
-
-            return NoContent();
+            catch (Exception)
+            {
+                return StatusCode(StatusCodes.Status500InternalServerError, "Error retrieving data from the database");
+            }
         }
 
-        //TODO
-        //PUT:
-        
+        //PUT: /api/Posts/{slug}
+        [HttpPut("{slug}")]
+        public async Task<ActionResult<Post>> Put(string slug, PostRequestData? postRequest)
+        {
+            if (postRequest == null || postRequest.BlogPost==null)
+            {
+                return BadRequest("Empty body request.");
+            }
+            var post = postRequest.BlogPost;
+            if (slug != post.Slug)
+            {
+                return BadRequest();
+            }
+            
+            try
+            {
+                context.ChangeTracker.QueryTrackingBehavior = QueryTrackingBehavior.NoTracking;
+                var oldPost = postService.GetPostBySlugAsync(slug).Result;
+                context.Entry(post).State = EntityState.Detached;
+                if (oldPost == null)
+                {
+                    return NotFound();
+                }
+                var newSlug = Utilities.Slugify(post.Title);
+                if (!slug.Equals(newSlug)) //ako je unesen novi title, treba provjeriti je li yauyet
+                {
+                    var existingPost = postService.GetPostBySlugAsync(newSlug);
+                    if (existingPost.Result != null)
+                    {
+                        return BadRequest("Already exists post's slug generated from the title.");
+                    }
+                }
+                
+                    var newPost = postService.PutPost(oldPost, post).Result;
+                    return CreatedAtAction(nameof(GetPostBySlug), new { slug = newPost.Slug }, newPost);
+                
+            }
+            catch (DbUpdateConcurrencyException)
+            {
+                return StatusCode(StatusCodes.Status500InternalServerError, "Error retrieving data from the database");
+            }
+        }
+
+        //DELETE:
+        [HttpDelete("{slug}")]
+        public IActionResult DeletePost(string slug)
+        {
+            try
+            {
+                var post = postService.GetPostBySlugAsync(slug).Result; 
+                if (post == null)
+                {
+                    return NotFound();
+                }
+                postService.RemoveAsync(post);
+            }
+            catch (Exception)
+            {
+                return StatusCode(StatusCodes.Status500InternalServerError, "Error retrieving data from the database");
+            }
+            return NoContent();
+        }
     }
 }
-
-

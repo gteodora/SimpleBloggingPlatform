@@ -9,6 +9,7 @@ using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.OpenApi.Models;
 using SimpleBloggingPlatform.DAO;
+using SimpleBloggingPlatform.Services;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -35,6 +36,9 @@ namespace SimpleBloggingPlatform
             {
                 c.SwaggerDoc("v1", new OpenApiInfo { Title = "SimpleBloggingPlatform", Version = "v1" });
             });
+            services.AddScoped<IPostService, PostService>();
+            services.AddScoped<ITagService, TagService>();
+            services.AddScoped<IPostTagService, PostTagService>();
         }
 
         // This method gets called by the runtime. Use this method to configure the HTTP request pipeline.

@@ -22,13 +22,17 @@ namespace SimpleBloggingPlatform.Models
         public string Description { get; set; }
         [Required]
         public string Body { get; set; }
+        [NotMapped]
+        public List<string> TagList { get; set; }
         [Column("created_at")]
-        public string CreatedAt { get;  set; } //UTC ce biti u bazi, pa cu to ovako prebaciti za JSON .ToString("yyyy'-'MM'-'dd'T'HH':'mm':'ss'.'fffK");
+        public string  CreatedAt { get; set; } //UTC ce biti u bazi, pa cu to ovako prebaciti za JSON .ToString("yyyy'-'MM'-'dd'T'HH':'mm':'ss'.'fffK");
         [Column("updated_at")]
         public string UpdatedAt { get;  set; }
         [JsonIgnore]
-        public  ICollection<Tag> Tags { get; set; } 
-         [NotMapped]
-         public List<string> TagList { get; set; }
+        public  ICollection<Tag> Tags { get; set; }
+     //   [JsonIgnore]
+     //   public ICollection<PostTag> PostTags { get; set; }
+
+
     }
 }

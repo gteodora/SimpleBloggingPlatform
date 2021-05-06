@@ -11,12 +11,14 @@ namespace SimpleBloggingPlatform.Models
     [Table("tag")]
     public class Tag
     {
-        [Key]
+        [Key, DatabaseGenerated(DatabaseGeneratedOption.Identity)]
         [Required]
         public int Id { get; set; }
         [Required]
         public string Name { get; set; }
         [JsonIgnore]
-        public ICollection<Post> Posts { get; set; } 
+        public ICollection<Post> Posts { get; set; }
+     //   [JsonIgnore]
+    //    public ICollection<PostTag> PostTags { get; set; }
     }
 }
